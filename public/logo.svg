@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- Outer arc left -->
+  <path d="M45 160 C20 130, 20 70, 55 40" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Outer arc right -->
+  <path d="M155 160 C180 130, 180 70, 145 40" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Book base curve -->
+  <path d="M55 155 Q100 170 145 155" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Book spine -->
+  <line x1="100" y1="55" x2="100" y2="155" stroke="white" stroke-width="3"/>
+  <!-- Book left page -->
+  <path d="M60 55 L60 145 Q80 155 100 155 L100 55 Z" stroke="white" stroke-width="2.5" fill="none"/>
+  <!-- Book right page -->
+  <path d="M140 55 L140 145 Q120 155 100 155 L100 55 Z" stroke="white" stroke-width="2.5" fill="none"/>
+  <!-- Text lines on left page -->
+  <line x1="68" y1="75" x2="92" y2="75" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="68" y1="88" x2="92" y2="88" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="68" y1="101" x2="92" y2="101" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="68" y1="114" x2="85" y2="114" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Audio waveform bars on right page -->
+  <line x1="110" y1="82" x2="110" y2="108" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="117" y1="72" x2="117" y2="118" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="124" y1="78" x2="124" y2="112" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="131" y1="68" x2="131" y2="122" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="138" y1="80" x2="138" y2="110" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Graduation cap -->
+  <polygon points="100,22 60,42 100,52 140,42" stroke="white" stroke-width="2.5" fill="none"/>
+  <line x1="100" y1="52" x2="100" y2="42" stroke="white" stroke-width="2"/>
+  <polygon points="100,22 60,42 100,52 140,42" fill="white" fill-opacity="0.15"/>
+  <!-- Tassel -->
+  <line x1="140" y1="42" x2="148" y2="55" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="148" cy="58" r="2.5" fill="white"/>
+</svg>

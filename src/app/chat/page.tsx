@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import FileUpload from '@/components/FileUpload';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 import {
   getAllFiles,
   deleteFile,
@@ -392,7 +393,7 @@ export default function ChatPage() {
                     ))}
                   </div>
                 )}
-                <div className="whitespace-pre-line">{msg.content}</div>
+                <MarkdownRenderer content={msg.content} />
                 <div className={`text-[10px] mt-1.5 ${
                   msg.role === 'user' ? 'text-white/50' : 'text-text-muted'
                 }`}>

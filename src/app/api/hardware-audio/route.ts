@@ -332,7 +332,7 @@ async function transcribeAudio(wavBuffer: Buffer, promptText: string = ""): Prom
   if (!groqKey) return null;
 
   const formData = new FormData();
-  formData.append("file", new Blob([wavBuffer], { type: "audio/wav" }), "audio.wav");
+  formData.append("file", new Blob([new Uint8Array(wavBuffer)], { type: "audio/wav" }), "audio.wav");
   formData.append("model", "whisper-large-v3");
   formData.append("response_format", "verbose_json");
   formData.append("language", "vi");

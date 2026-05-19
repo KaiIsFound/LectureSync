@@ -71,22 +71,20 @@ function saveSessions(sessions: LectureSession[]) {
 }
 
 // ── Supabase Background Sync (Silent — không crash app nếu RLS chặn) ──
-function syncSessionToCloud(session: LectureSession) {
+async function syncSessionToCloud(session: LectureSession) {
   if (typeof window === 'undefined') return;
   try {
-    supabase.from('sessions')
-      .upsert({ id: session.id, data: session, updated_at: new Date().toISOString() })
-      .then(({ error }) => { if (error) console.warn('[Sync] Session sync skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('sessions')
+      .upsert({ id: session.id, data: session, updated_at: new Date().toISOString() });
+    if (error) console.warn('[Sync] Session sync skipped:', error.message);
   } catch { /* silent */ }
 }
 
-function deleteSessionFromCloud(id: string) {
+async function deleteSessionFromCloud(id: string) {
   if (typeof window === 'undefined') return;
   try {
-    supabase.from('sessions').delete().eq('id', id)
-      .then(({ error }) => { if (error) console.warn('[Sync] Delete skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('sessions').delete().eq('id', id);
+    if (error) console.warn('[Sync] Delete skipped:', error.message);
   } catch { /* silent */ }
 }
 
@@ -197,22 +195,20 @@ function saveFiles(files: UploadedFile[]) {
   localStorage.setItem(FILES_KEY, JSON.stringify(files));
 }
 
-function syncFileToCloud(file: UploadedFile) {
+async function syncFileToCloud(file: UploadedFile) {
   if (typeof window === 'undefined') return;
   try {
-    supabase.from('uploaded_files')
-      .upsert({ id: file.id, data: file, updated_at: new Date().toISOString() })
-      .then(({ error }) => { if (error) console.warn('[Sync] File sync skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('uploaded_files')
+      .upsert({ id: file.id, data: file, updated_at: new Date().toISOString() });
+    if (error) console.warn('[Sync] File sync skipped:', error.message);
   } catch { /* silent */ }
 }
 
-function deleteFileFromCloud(id: string) {
+async function deleteFileFromCloud(id: string) {
   if (typeof window === 'undefined') return;
   try {
-    supabase.from('uploaded_files').delete().eq('id', id)
-      .then(({ error }) => { if (error) console.warn('[Sync] File delete skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('uploaded_files').delete().eq('id', id);
+    if (error) console.warn('[Sync] File delete skipped:', error.message);
   } catch { /* silent */ }
 }
 
@@ -254,27 +250,25 @@ export function getChatHistory(): ChatMessage[] {
   }
 }
 
-export function saveChatHistory(messages: ChatMessage[]) {
+export async function saveChatHistory(messages: ChatMessage[]) {
   if (typeof window === 'undefined') return;
   const trimmed = messages.slice(-50);
   localStorage.setItem(CHAT_KEY, JSON.stringify(trimmed));
   
   // Lưu chat lên mây (silent nếu RLS chặn)
   try {
-    supabase.from('chat_messages')
-      .upsert({ id: 'global_chat', data: trimmed, updated_at: new Date().toISOString() })
-      .then(({ error }) => { if (error) console.warn('[Sync] Chat sync skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('chat_messages')
+      .upsert({ id: 'global_chat', data: trimmed, updated_at: new Date().toISOString() });
+    if (error) console.warn('[Sync] Chat sync skipped:', error.message);
   } catch { /* silent */ }
 }
 
-export function clearChatHistory() {
+export async function clearChatHistory() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(CHAT_KEY);
   try {
-    supabase.from('chat_messages').delete().eq('id', 'global_chat')
-      .then(({ error }) => { if (error) console.warn('[Sync] Chat delete skipped:', error.message); })
-      .catch(() => {});
+    const { error } = await supabase.from('chat_messages').delete().eq('id', 'global_chat');
+    if (error) console.warn('[Sync] Chat delete skipped:', error.message);
   } catch { /* silent */ }
 }
 

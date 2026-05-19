@@ -70,18 +70,24 @@ function saveSessions(sessions: LectureSession[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
 }
 
-// ── Supabase Background Sync ──
+// ── Supabase Background Sync (Silent — không crash app nếu RLS chặn) ──
 function syncSessionToCloud(session: LectureSession) {
   if (typeof window === 'undefined') return;
-  supabase.from('sessions')
-    .upsert({ id: session.id, data: session, updated_at: new Date().toISOString() })
-    .then(({ error }) => { if (error) console.error('[Sync] Session error:', error.message || error); });
+  try {
+    supabase.from('sessions')
+      .upsert({ id: session.id, data: session, updated_at: new Date().toISOString() })
+      .then(({ error }) => { if (error) console.warn('[Sync] Session sync skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 function deleteSessionFromCloud(id: string) {
   if (typeof window === 'undefined') return;
-  supabase.from('sessions').delete().eq('id', id)
-    .then(({ error }) => { if (error) console.error('[Sync] Delete error:', error.message || error); });
+  try {
+    supabase.from('sessions').delete().eq('id', id)
+      .then(({ error }) => { if (error) console.warn('[Sync] Delete skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 export function getAllSessions(): LectureSession[] {
@@ -193,15 +199,21 @@ function saveFiles(files: UploadedFile[]) {
 
 function syncFileToCloud(file: UploadedFile) {
   if (typeof window === 'undefined') return;
-  supabase.from('uploaded_files')
-    .upsert({ id: file.id, data: file, updated_at: new Date().toISOString() })
-    .then(({ error }) => { if (error) console.error('[Sync] File error:', error.message || error); });
+  try {
+    supabase.from('uploaded_files')
+      .upsert({ id: file.id, data: file, updated_at: new Date().toISOString() })
+      .then(({ error }) => { if (error) console.warn('[Sync] File sync skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 function deleteFileFromCloud(id: string) {
   if (typeof window === 'undefined') return;
-  supabase.from('uploaded_files').delete().eq('id', id)
-    .then(({ error }) => { if (error) console.error('[Sync] File delete error:', error.message || error); });
+  try {
+    supabase.from('uploaded_files').delete().eq('id', id)
+      .then(({ error }) => { if (error) console.warn('[Sync] File delete skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 export function getAllFiles(): UploadedFile[] {
@@ -247,17 +259,23 @@ export function saveChatHistory(messages: ChatMessage[]) {
   const trimmed = messages.slice(-50);
   localStorage.setItem(CHAT_KEY, JSON.stringify(trimmed));
   
-  // Lưu chat lên mây (chỉ cần lưu mảng nguyên khối vì không cần truy xuất từng tin nhắn)
-  supabase.from('chat_messages')
-    .upsert({ id: 'global_chat', data: trimmed, updated_at: new Date().toISOString() })
-    .then(({ error }) => { if (error) console.error('[Sync] Chat error:', error.message || error); });
+  // Lưu chat lên mây (silent nếu RLS chặn)
+  try {
+    supabase.from('chat_messages')
+      .upsert({ id: 'global_chat', data: trimmed, updated_at: new Date().toISOString() })
+      .then(({ error }) => { if (error) console.warn('[Sync] Chat sync skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 export function clearChatHistory() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(CHAT_KEY);
-  supabase.from('chat_messages').delete().eq('id', 'global_chat')
-    .then(({ error }) => { if (error) console.error('[Sync] Chat delete error:', error.message || error); });
+  try {
+    supabase.from('chat_messages').delete().eq('id', 'global_chat')
+      .then(({ error }) => { if (error) console.warn('[Sync] Chat delete skipped:', error.message); })
+      .catch(() => {});
+  } catch { /* silent */ }
 }
 
 // === Build context for chatbot ===

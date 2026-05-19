@@ -79,31 +79,14 @@ export async function POST(req: Request) {
       const allTranscripts = await kv.getAllTranscripts();
       const promptText = allTranscripts.slice(-3).join(" ").slice(-200);
 
-      // PCM → WAV → Whisper
+      // PCM → WAV → Whisper/Deepgram
       const wavHeader = createWavHeader(chunkBuffer.length);
       const wavFile = Buffer.concat([wavHeader, chunkBuffer]);
 
-      const formData = new FormData();
-      formData.append("file", new Blob([wavFile], { type: "audio/wav" }), "audio.wav");
-      formData.append("model", "whisper-large-v3-turbo");
-      formData.append("response_format", "verbose_json");
-      formData.append("language", "vi");
-      formData.append("temperature", "0");
-      if (promptText) formData.append("prompt", promptText);
-
-      const groqRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}` },
-        body: formData,
-      });
-
-      if (!groqRes.ok) {
-        console.error("[ESP32→KV] Groq error:", await groqRes.text());
-        return NextResponse.json({ success: false, error: "Groq error" }, { status: 500, headers: corsHeaders });
+      const text = await transcribeAudio(wavFile, promptText);
+      if (text === null) {
+        return NextResponse.json({ success: false, error: "STT error" }, { status: 500, headers: corsHeaders });
       }
-
-      const groqData = await groqRes.json();
-      const text = (groqData?.text || "").trim();
 
       if (text && !isHallucination(text)) {
         console.log(`[ESP32→KV] ✅ ${text.slice(0, 80)}...`);
@@ -114,18 +97,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, transcript: "" }, { headers: corsHeaders });
     }
 
-    // ── Local Mode (localhost): giữ nguyên logic cũ ──
-    localFullRecording = Buffer.concat([localFullRecording, chunkBuffer]);
-    localAudioAccumulator = Buffer.concat([localAudioAccumulator, chunkBuffer]);
-    localMeta = { time: Date.now(), bytes: localFullRecording.length };
-
-    if (localAudioAccumulator.length < LOCAL_CHUNK_BYTES) {
-      return NextResponse.json({ success: true, status: "buffering", bytes: localAudioAccumulator.length }, { headers: corsHeaders });
-    }
-
-    const audioToProcess = localAudioAccumulator;
-    localAudioAccumulator = Buffer.from(localAudioAccumulator.subarray(localAudioAccumulator.length - 64000));
-
+    // ── Gửi trực tiếp chunk audio lên AI (Trình duyệt đã lo việc gom audio) ──
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ success: true, transcript: "" }, { headers: corsHeaders });
@@ -134,30 +106,13 @@ export async function POST(req: Request) {
     // Lấy context từ transcript trước
     const promptText = localTranscripts.slice(-3).join(" ").slice(-200);
 
-    const wavHeader = createWavHeader(audioToProcess.length);
-    const fullWavBuffer = Buffer.concat([wavHeader, audioToProcess]);
+    const wavHeader = createWavHeader(chunkBuffer.length);
+    const fullWavBuffer = Buffer.concat([wavHeader, chunkBuffer]);
 
-    const formData = new FormData();
-    formData.append("file", new Blob([fullWavBuffer], { type: "audio/wav" }), "audio.wav");
-    formData.append("model", "whisper-large-v3-turbo");
-    formData.append("response_format", "verbose_json");
-    formData.append("language", "vi");
-    formData.append("temperature", "0");
-    if (promptText) formData.append("prompt", promptText);
-
-    const groqRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}` },
-      body: formData,
-    });
-
-    if (!groqRes.ok) {
-      console.error("[ESP32 Local] Groq error:", await groqRes.text());
+    const text = await transcribeAudio(fullWavBuffer, promptText);
+    if (text === null) {
       return NextResponse.json({ success: false }, { status: 500, headers: corsHeaders });
     }
-
-    const groqData = await groqRes.json();
-    const text = (groqData?.text || "").trim();
 
     if (text && !isHallucination(text)) {
       console.log(`[ESP32 Local] ✅ ${text.slice(0, 80)}`);
@@ -268,29 +223,13 @@ export async function PUT() {
       const wavHeader = createWavHeader(chunk.length);
       const wavFile = Buffer.concat([wavHeader, chunk]);
 
-      const formData = new FormData();
-      formData.append("file", new Blob([wavFile], { type: "audio/wav" }), "recording.wav");
-      formData.append("model", "whisper-large-v3");
-      formData.append("response_format", "verbose_json");
-      formData.append("language", "vi");
-      formData.append("temperature", "0");
-      if (finalParts.length > 0) {
-        formData.append("prompt", finalParts[finalParts.length - 1].slice(-200));
-      }
-
-      const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}` },
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const text = (data?.text || "").trim();
+      const text = await transcribeAudio(wavFile, finalParts.length > 0 ? finalParts[finalParts.length - 1].slice(-200) : "");
+      
+      if (text !== null) {
         if (text.length > 0 && !isHallucination(text)) {
           finalParts.push(text);
         }
-      } else if ((await res.text()).includes("rate_limit")) {
+      } else {
         await new Promise(r => setTimeout(r, 4000));
         continue;
       }
@@ -347,10 +286,70 @@ function isHallucination(text: string): boolean {
     lower.includes("bỏ lỡ những video") ||
     lower === "thank you." ||
     lower.includes("cảm ơn các bạn đã theo dõi") ||
+    lower === "cảm ơn." ||
+    lower === "cảm ơn" ||
+    lower === "cảm ơn cảm ơn" ||
+    lower.includes("hẹn gặp lại") ||
+    lower.includes("video tiếp theo") ||
+    lower === "bum... bum..." ||
+    lower === "oh" ||
+    lower === "oh oh" ||
+    lower === "oh oh oh" ||
+    lower.includes("h h h") ||
+    lower.includes("h h") ||
+    lower.includes("e h h") ||
+    lower.includes("ehe esam") ||
+    lower.includes("ehe.") ||
+    lower.includes("ehe") ||
+    lower.includes("phong") ||
+    lower.includes("vok") ||
+    lower.includes("plocks") ||
+    lower.includes("png") ||
+    lower.includes("sot") ||
+    lower.includes("ddc") ||
+    lower.includes("slovena") ||
+    lower.includes("c'est") ||
     !!text.match(/^[. ]*$/) ||
     lower === "thanks for watching." ||
     lower.includes("chúng ta sẽ bắt đầu") ||
     lower.includes("bắt đầu bài học hôm nay") ||
-    lower.includes("xin chào đây là bài giảng")
+    lower.includes("xin chào đây là bài giảng") ||
+    lower.includes("còn bây giờ thì sao") ||
+    lower.includes("bây giờ thì sao") ||
+    lower.includes("còn bây giờ") ||
+    // ★ BỘ LỌC THÔNG MINH: Bắt mọi từ lặp lại 3+ lần (dấu hiệu 100% ảo giác)
+    !!text.match(/\b(\w+)\b(?:\s+\1){2,}/i) ||
+    // ★ Transcript quá ngắn thường là tiếng rác gõ phím/rè
+    text.trim().length <= 3
   );
+}
+
+// ════════════════════════════════════════
+// STT Helper (Deepgram fallback to Groq)
+// ════════════════════════════════════════
+async function transcribeAudio(wavBuffer: Buffer, promptText: string = ""): Promise<string | null> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return null;
+
+  const formData = new FormData();
+  formData.append("file", new Blob([wavBuffer], { type: "audio/wav" }), "audio.wav");
+  formData.append("model", "whisper-large-v3");
+  formData.append("response_format", "verbose_json");
+  formData.append("language", "vi");
+  formData.append("temperature", "0");
+
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${groqKey}` },
+    body: formData,
+  });
+  
+  if (!res.ok) {
+    const err = await res.text();
+    if (err.includes("rate_limit")) await new Promise(r => setTimeout(r, 4000));
+    return null;
+  }
+  
+  const data = await res.json();
+  return (data?.text || "").trim();
 }

@@ -6,7 +6,7 @@ interface AudioVisualizerResult {
   frequencyData: Uint8Array | null;
   isActive: boolean;
   start: () => Promise<void>;
-  stop: () => void;
+  stop: () => Promise<Blob | null>;
   getFrequencyData: () => Uint8Array | null;
 }
 
@@ -17,11 +17,22 @@ export function useAudioVisualizer(): AudioVisualizerResult {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
 
   const start = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      // ★ Start Recording with MediaRecorder
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      mediaRecorder.start(500); // capture chunks every 500ms
+      mediaRecorderRef.current = mediaRecorder;
 
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
@@ -43,21 +54,29 @@ export function useAudioVisualizer(): AudioVisualizerResult {
   }, []);
 
   const stop = useCallback(() => {
-    if (sourceRef.current) {
-      sourceRef.current.disconnect();
-      sourceRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    analyserRef.current = null;
-    dataArrayRef.current = null;
-    setIsActive(false);
+    return new Promise<Blob | null>((resolve) => {
+      let recordedBlob: Blob | null = null;
+      const cleanup = () => {
+        if (sourceRef.current) { sourceRef.current.disconnect(); sourceRef.current = null; }
+        if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+        if (streamRef.current) { streamRef.current.getTracks().forEach(track => track.stop()); streamRef.current = null; }
+        analyserRef.current = null;
+        dataArrayRef.current = null;
+        setIsActive(false);
+      };
+
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.onstop = () => {
+          recordedBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          cleanup();
+          resolve(recordedBlob);
+        };
+        mediaRecorderRef.current.stop();
+      } else {
+        cleanup();
+        resolve(null);
+      }
+    });
   }, []);
 
   const getFrequencyData = useCallback(() => {

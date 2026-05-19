@@ -53,29 +53,46 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40">
-      <div className="h-px bg-gradient-to-r from-transparent via-brand/30 to-transparent" />
-      <div className="glass border-t border-border">
-        <div className="max-w-lg mx-auto flex justify-around items-center h-16 px-2">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 pb-4 px-4 md:px-8 pointer-events-none">
+      {/* Nền mờ nhạt dần xuống dưới để hoà quyện với dock */}
+      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-bg via-bg/80 to-transparent -z-10 pointer-events-none" />
+      
+      <div className="max-w-md mx-auto pointer-events-auto">
+        <div className="bg-white/60 dark:bg-[#0f172a]/70 backdrop-blur-2xl border border-white/50 dark:border-white/10 rounded-[2rem] shadow-[0_10px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex justify-around items-center p-2 relative overflow-hidden">
+          {/* Viền sáng phía trên */}
+          <div className="absolute top-0 inset-x-12 h-[1px] bg-gradient-to-r from-transparent via-blue-500/30 dark:via-blue-400/30 to-transparent" />
+          
           {tabs.map((tab, i) => {
             const isActive = pathname === tab.href;
             return (
               <Link
                 key={tab.href}
                 href={tab.href}
-                className={`flex flex-col items-center gap-1 px-2 py-1.5 rounded-xl transition-all duration-300 ${
-                  isActive ? 'text-brand' : 'text-text-muted hover:text-text-secondary'
+                className={`relative flex flex-col items-center gap-1.5 px-4 py-2 rounded-2xl transition-all duration-500 overflow-hidden ${
+                  isActive 
+                    ? 'text-blue-600 dark:text-blue-400 scale-105' 
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:scale-105'
                 }`}
               >
-                <div className="relative">
+                {/* Nền mờ cho tab đang active */}
+                {isActive && (
+                  <div className="absolute inset-0 bg-blue-500/10 dark:bg-blue-500/20 rounded-2xl" />
+                )}
+                
+                <div className={`relative z-10 transition-transform duration-300 ${isActive ? '-translate-y-0.5 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : ''}`}>
                   {tabIcons[i]}
-                  {isActive && (
-                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-0.5 rounded-full gradient-bg" />
-                  )}
                 </div>
-                <span className={`text-[10px] font-medium tracking-wide ${isActive ? 'text-brand' : ''}`}>
+                
+                <span className={`relative z-10 text-[10px] font-bold tracking-wide transition-all duration-300 ${
+                  isActive ? 'opacity-100' : 'opacity-70 group-hover:opacity-100'
+                }`}>
                   {tab.name}
                 </span>
+
+                {/* Chấm tròn phát sáng phía dưới tab active */}
+                {isActive && (
+                  <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,1)]" />
+                )}
               </Link>
             );
           })}

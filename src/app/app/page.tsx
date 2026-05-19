@@ -80,26 +80,85 @@ export default function RecordPage() {
     if (speech.error && !useHW) showToast(speech.error, 'error');
   }, [speech.error, showToast, useHW]);
 
-  // ── ESP32 polling ──
-  useEffect(() => {
-    if (useHW) {
-      const poll = async () => {
-        try {
-          const r = await fetch('/api/hardware-audio');
-          if (!r.ok) throw new Error(`${r.status}`);
-          const d = await r.json();
-          const on = d.lastReceived > 0 && Date.now() - d.lastReceived < 8000;
-          setHwStatus(p => ({ online: on, bytes: d.lastBytes || 0, lastTime: d.lastReceived || 0, retries: on ? 0 : p.retries + 1 }));
-          if (isRecording && d.transcripts?.length > 0) setHwText(p => p ? p + ' ' + d.transcripts.join(' ') : d.transcripts.join(' '));
-        } catch { setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 })); }
-      };
-      poll();
-      hwTimer.current = setInterval(poll, 3000);
-    } else {
-      if (hwTimer.current) clearInterval(hwTimer.current);
-      setHwStatus({ online: false, bytes: 0, lastTime: 0, retries: 0 });
+  // ── ESP32 WebSocket Streaming ──
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamActiveRef = useRef(false);
+
+  const processAudioChunks = async () => {
+    if (audioChunksRef.current.length === 0) return;
+    const fullBlob = new Blob(audioChunksRef.current, { type: "audio/pcm" });
+    audioChunksRef.current = []; // Reset
+    try {
+      const arrayBuffer = await fullBlob.arrayBuffer();
+      const res = await fetch("/api/hardware-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: arrayBuffer,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.transcript && data.transcript.trim()) {
+          setHwText(p => p ? p + ' ' + data.transcript.trim() : data.transcript.trim());
+          setHwStatus(p => ({ ...p, online: true, lastTime: Date.now() }));
+        }
+      }
+    } catch (err) {
+      console.error("ESP32 process error:", err);
     }
-    return () => { if (hwTimer.current) clearInterval(hwTimer.current); };
+  };
+
+  useEffect(() => {
+    if (useHW && isRecording) {
+      try {
+        // Kết nối WebSocket trực tiếp đến mạch ESP32
+        const ws = new WebSocket(`ws://192.168.0.102:81`);
+        ws.binaryType = "arraybuffer";
+        
+        ws.onopen = () => {
+          streamActiveRef.current = true;
+          setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
+          showToast("Đã kết nối luồng thu âm siêu tốc với ESP32!", "success");
+        };
+
+        ws.onmessage = (event) => {
+          if (!streamActiveRef.current) return;
+          if (event.data instanceof ArrayBuffer) {
+            const blob = new Blob([event.data], { type: "audio/pcm" });
+            audioChunksRef.current.push(blob);
+            
+            // Gom 2.5 giây rồi dịch
+            if (audioChunksRef.current.length >= 80) {
+              processAudioChunks();
+            }
+          }
+        };
+
+        ws.onerror = () => {
+          setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
+        };
+
+        ws.onclose = () => {
+          setHwStatus(p => ({ ...p, online: false }));
+        };
+
+        wsRef.current = ws;
+      } catch (e) {
+        console.error("WebSocket Error", e);
+      }
+    } else {
+      streamActiveRef.current = false;
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      if (audioChunksRef.current.length > 0) processAudioChunks(); // Dịch nốt đoạn cuối
+    }
+    
+    return () => {
+      streamActiveRef.current = false;
+      if (wsRef.current) wsRef.current.close();
+    };
   }, [useHW, isRecording]);
 
   // ── AI explanation ──
@@ -131,30 +190,43 @@ export default function RecordPage() {
   // ── Toggle ──
   const toggle = async () => {
     if (isRecording) {
-      if (!useHW) { speech.stop(); audio.stop(); }
+      let audioBlob: Blob | null = null;
+      if (!useHW) { 
+        speech.stop(); 
+        audioBlob = await audio.stop(); 
+      }
       setIsRecording(false);
       const tx = (useHW ? hwText : speech.finalTranscript).trim();
-      if (!tx || tx.length < 10) { showToast(t.record.tooShort, 'info'); return; }
+      if (!useHW && !audioBlob && (!tx || tx.length < 10)) { showToast(t.record.tooShort, 'info'); return; }
+      if (useHW && (!tx || tx.length < 10)) { showToast(t.record.tooShort, 'info'); return; }
 
       setIsProcessing(true);
       setProcStep('Đang xử lý bản ghi âm thanh...');
 
-      // ★ Nếu đang dùng ESP32: gọi API finalize để Whisper xử lý lại toàn bộ file audio
-      //   cho ra bản transcript chuẩn xác nhất, thay vì dùng bản live (rời rạc, hay sai)
+      // Bỏ finalize bằng API cũ, vì WebSocket đã xử lý Real-time
       let finalTxToProcess = tx;
       if (useHW) {
+        console.log(`[WebSocket Final] Bản dịch từ mạch ESP32: ${finalTxToProcess.length} ký tự`);
+      }
+      
+      // ★ Nếu đang dùng web mic: gửi thẳng file audio lên AI để dịch lại chuẩn xác nhất!
+      if (!useHW && audioBlob) {
         try {
-          setProcStep('Đang xử lý lại toàn bộ bản ghi audio...');
-          const finalizeRes = await fetch('/api/hardware-audio', { method: 'PUT' });
-          if (finalizeRes.ok) {
-            const finalizeData = await finalizeRes.json();
-            if (finalizeData.transcript && finalizeData.transcript.trim().length > 10) {
-              finalTxToProcess = finalizeData.transcript.trim();
-              console.log(`[Finalize] Dùng bản transcript chuẩn (${finalizeData.method}): ${finalTxToProcess.length} ký tự`);
+          setProcStep('Đang dịch lại file ghi âm bằng AI để đạt độ chuẩn 100%...');
+          const formData = new FormData();
+          formData.append('file', audioBlob, 'recording.webm');
+          formData.append('language', speech.currentLang === 'vi-VN' ? 'vi' : speech.currentLang === 'en-US' ? 'en' : 'zh');
+          
+          const uploadRes = await fetch('/api/transcribe-file', { method: 'POST', body: formData });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.transcript && uploadData.transcript.length > 10) {
+              finalTxToProcess = uploadData.transcript;
+              console.log(`[WebMic Final] Bản dịch chuẩn: ${finalTxToProcess.length} ký tự`);
             }
           }
         } catch (e) {
-          console.warn('[Finalize] Lỗi, dùng live transcript thay thế:', e);
+          console.warn('[WebMic Final] Lỗi khi dịch file, dùng live transcript:', e);
         }
       }
 
@@ -327,18 +399,49 @@ export default function RecordPage() {
 
         {/* ━━━ FEATURE CARDS (idle state) ━━━ */}
         {!isRecording && !finalTx && (
-          <div className="max-w-4xl mx-auto animate-fade-in">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {t.record.features.map((f, i) => (
-                <Link key={f.title} href={f.href}
-                  className={`group relative rounded-2xl bg-white dark:bg-white/[0.03] border border-gray-200 dark:border-white/[0.06] p-5 text-center transition-all duration-300 hover:border-blue-300 dark:hover:border-indigo-500/30 hover:shadow-[var(--card-shadow-hover)] hover:scale-[1.03] active:scale-[0.97]`}>
-                  <div className="text-3xl mb-3 group-hover:scale-110 group-hover:-rotate-6 transition-transform duration-300">{f.icon}</div>
-                  <p className="text-xs font-semibold text-text-primary mb-1 group-hover:text-electric transition-colors">{f.title}</p>
-                  <p className="text-[10px] text-text-muted leading-snug">{f.desc}</p>
-                </Link>
-              ))}
+          <div className="max-w-5xl mx-auto animate-fade-in mt-12 relative z-10">
+            {/* Trang trí nền */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[300px] bg-brand/5 blur-[120px] rounded-[100%] pointer-events-none" />
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+              {t.record.features.map((f, i) => {
+                const colorMatches = GLOW_COLORS[i % GLOW_COLORS.length].match(/rgba\((.*?)\)/);
+                const glowColor = colorMatches ? `rgba(${colorMatches[1]})` : 'rgba(59,130,246,0.5)';
+                const subtleBg = colorMatches ? `rgba(${colorMatches[1].replace(/0\.\d+/, '0.03')})` : 'rgba(59,130,246,0.03)';
+                const borderGlow = colorMatches ? `rgba(${colorMatches[1].replace(/0\.\d+/, '0.2')})` : 'rgba(59,130,246,0.2)';
+                
+                return (
+                  <Link key={f.title} href={f.href}
+                    className="group relative rounded-[2rem] backdrop-blur-xl p-[1px] transition-all duration-500 hover:-translate-y-2 hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.1)] dark:hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] overflow-hidden"
+                  >
+                    {/* Gradient Border */}
+                    <div className="absolute inset-0 rounded-[2rem] bg-gradient-to-br from-white/60 to-white/10 dark:from-white/20 dark:to-white/5 opacity-50 group-hover:opacity-100 transition-opacity duration-500" style={{ backgroundImage: `linear-gradient(to bottom right, ${borderGlow}, transparent)` }} />
+                    
+                    {/* Card Body */}
+                    <div className="relative h-full w-full rounded-[calc(2rem-1px)] bg-white/70 dark:bg-[#0f172a]/80 p-6 md:p-8 flex flex-col items-center overflow-hidden" style={{ backgroundColor: subtleBg }}>
+                      {/* Glass reflection */}
+                      <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/40 dark:via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none transform -translate-x-full group-hover:translate-x-full" />
+                      
+                      {/* Background glow on hover */}
+                      <div className="absolute -inset-0.5 opacity-0 group-hover:opacity-[0.15] transition-opacity duration-500 blur-2xl" style={{ backgroundColor: glowColor }} />
+                      
+                      <div className="relative z-10 flex flex-col items-center">
+                        <div className="w-16 h-16 mb-5 rounded-2xl bg-white/90 dark:bg-white/10 shadow-[0_8px_16px_-6px_rgba(0,0,0,0.1)] border border-white dark:border-white/10 flex items-center justify-center text-4xl group-hover:scale-110 group-hover:-rotate-6 transition-transform duration-500" style={{ textShadow: `0 0 20px ${glowColor}`, borderColor: borderGlow }}>
+                          {f.icon}
+                        </div>
+                        <p className="text-sm md:text-base font-bold text-slate-800 dark:text-slate-100 mb-2 group-hover:text-blue-600 dark:group-hover:text-white transition-colors">{f.title}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors">{f.desc}</p>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
-            <p className="text-center text-text-secondary text-xs mt-8 tracking-wide">{t.record.tapMic}</p>
+            <p className="text-center text-slate-400 dark:text-slate-500 text-sm mt-12 font-medium tracking-wide flex items-center justify-center gap-4">
+              <span className="w-12 h-[1px] bg-gradient-to-r from-transparent to-slate-300 dark:to-slate-700"></span>
+              {t.record.tapMic}
+              <span className="w-12 h-[1px] bg-gradient-to-l from-transparent to-slate-300 dark:to-slate-700"></span>
+            </p>
           </div>
         )}
     </div>

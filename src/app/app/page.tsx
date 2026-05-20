@@ -186,8 +186,14 @@ export default function RecordPage() {
     let cancelled = false;
 
     const FALLBACK_RELAY_HOST = 'lecturesync-5960.loca.lt';
-    const RELAY_HTTP = (process.env.NEXT_PUBLIC_RELAY_HTTP as string) || `https://${FALLBACK_RELAY_HOST}` || 'http://localhost:8080';
-    const RELAY_WS = (process.env.NEXT_PUBLIC_RELAY_WS as string) || `ws://${FALLBACK_RELAY_HOST}` || 'ws://localhost:8080';
+    // Trang Vercel = HTTPS → bắt buộc wss/https, không dùng ws/http (trình duyệt chặn mixed content)
+    const secure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const RELAY_HTTP =
+      (process.env.NEXT_PUBLIC_RELAY_HTTP as string) ||
+      (secure ? `https://${FALLBACK_RELAY_HOST}` : `http://${FALLBACK_RELAY_HOST}`);
+    const RELAY_WS =
+      (process.env.NEXT_PUBLIC_RELAY_WS as string) ||
+      (secure ? `wss://${FALLBACK_RELAY_HOST}` : `ws://${FALLBACK_RELAY_HOST}`);
 
     const handleBinary = (data: ArrayBuffer) => {
       const size = data.byteLength || (data as any).length || 0;
@@ -195,7 +201,8 @@ export default function RecordPage() {
       if (isRecordingRef.current) {
         const blob = new Blob([data], { type: 'audio/pcm' });
         audioChunksRef.current.push(blob);
-        if (audioChunksRef.current.length >= 80) processAudioChunks();
+        // ~vài giây PCM (ESP POST ~1s/lần) — 80 là quá lâu, không thấy transcript
+        if (audioChunksRef.current.length >= 5) processAudioChunks();
       }
     };
 
@@ -222,7 +229,7 @@ export default function RecordPage() {
       }
     };
 
-    const connectRelay = async () => {
+    const connectRelay = async (): Promise<boolean> => {
       try {
         const res = await fetch(`${RELAY_HTTP}/devices`, {
           headers: { 'Bypass-Tunnel-Reminder': 'true' },
@@ -232,35 +239,54 @@ export default function RecordPage() {
         if (!devices || devices.length === 0) return false;
         const target = devices[0];
 
-        const ws = new WebSocket(RELAY_WS);
-        ws.binaryType = 'arraybuffer';
+        return await new Promise<boolean>((resolve) => {
+          const ws = new WebSocket(RELAY_WS);
+          ws.binaryType = 'arraybuffer';
+          let settled = false;
+          const failTimer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            ws.close();
+            console.warn('[Relay] WebSocket timeout', RELAY_WS);
+            resolve(false);
+          }, 10000);
 
-        ws.onopen = () => {
-          // subscribe to device
-          ws.send(JSON.stringify({ type: 'subscribe', id: target.id }));
-          streamActiveRef.current = true;
-          setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
-          showToast('Đã kết nối tới ESP32 qua relay!', 'success');
-        };
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'subscribe', id: target.id }));
+            streamActiveRef.current = true;
+            setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
+            showToast('Đã kết nối tới ESP32 qua relay!', 'success');
+            relayWs = ws;
+            wsRef.current = ws;
+            if (!settled) {
+              settled = true;
+              clearTimeout(failTimer);
+              resolve(true);
+            }
+          };
 
-        ws.onmessage = (event) => {
-          if (event.data instanceof ArrayBuffer) handleBinary(event.data);
-          else {
-            try {
-              const txt = JSON.parse(String(event.data));
-              if (txt && txt.type === 'subscribed') {
-                console.log('Subscribed to', txt.id);
-              }
-            } catch (e) {}
-          }
-        };
+          ws.onmessage = (event) => {
+            if (event.data instanceof ArrayBuffer) handleBinary(event.data);
+            else {
+              try {
+                const txt = JSON.parse(String(event.data));
+                if (txt && txt.type === 'subscribed') {
+                  console.log('Subscribed to', txt.id);
+                }
+              } catch (e) {}
+            }
+          };
 
-        ws.onerror = () => setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
-        ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
-
-        relayWs = ws;
-        wsRef.current = ws;
-        return true;
+          ws.onerror = () => {
+            setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
+            if (!settled) {
+              settled = true;
+              clearTimeout(failTimer);
+              resolve(false);
+            }
+          };
+          ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
+        });
       } catch (e) {
         console.error('Relay connect error', e);
         return false;

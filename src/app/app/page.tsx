@@ -49,6 +49,15 @@ export default function RecordPage() {
   const [useHW, setUseHW] = useState(false);
   const [hwText, setHwText] = useState('');
   const [hwStatus, setHwStatus] = useState({ online: false, bytes: 0, lastTime: 0, retries: 0 });
+  const [espIp, setEspIp] = useState('192.168.0.102');
+
+  // Load saved ESP32 IP
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('esp32_ip');
+      if (saved) setEspIp(saved);
+    }
+  }, []);
 
   const lastChunk = useRef('');
   const timer = useRef<NodeJS.Timeout | null>(null);
@@ -112,7 +121,7 @@ export default function RecordPage() {
     if (useHW && isRecording) {
       try {
         // Kết nối WebSocket trực tiếp đến mạch ESP32
-        const ws = new WebSocket(`ws://192.168.0.102:81`);
+        const ws = new WebSocket(`ws://${espIp}:81`);
         ws.binaryType = "arraybuffer";
         
         ws.onopen = () => {
@@ -159,7 +168,7 @@ export default function RecordPage() {
       streamActiveRef.current = false;
       if (wsRef.current) wsRef.current.close();
     };
-  }, [useHW, isRecording]);
+  }, [useHW, isRecording, espIp]);
 
   // ── AI explanation ──
   const explain = useCallback(async (text: string) => {
@@ -366,6 +375,23 @@ export default function RecordPage() {
                     </svg>
                   </button>
                 )}
+              </div>
+
+              {/* IP Input to easily change the IP address when WiFi changes */}
+              <div className="mt-4 pt-3 border-t border-border/50 flex items-center gap-3">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-text-muted shrink-0">IP ESP32:</span>
+                <input
+                  type="text"
+                  value={espIp}
+                  onChange={(e) => {
+                    const newIp = e.target.value.trim();
+                    setEspIp(newIp);
+                    localStorage.setItem('esp32_ip', newIp);
+                  }}
+                  disabled={isRecording}
+                  className="flex-1 bg-surface-elevated/50 border border-border/80 rounded-xl px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand disabled:opacity-50 transition-all font-mono"
+                  placeholder="Ví dụ: 192.168.0.102"
+                />
               </div>
             </div>
           </div>

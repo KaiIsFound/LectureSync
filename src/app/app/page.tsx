@@ -111,216 +111,58 @@ export default function RecordPage() {
     }
   };
 
-  const discoverESP32IP = async (): Promise<string | null> => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const res = await fetch('http://lecturensync-esp32.local/ip', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          console.log('[ESP32] Found via mDNS:', data.ip);
-          localStorage.setItem('lastEspIp', data.ip);
-          return data.ip;
-        }
-      } catch (e) {
-        console.log(`[ESP32] mDNS attempt ${attempt + 1} failed`);
-      }
-      await new Promise(r => setTimeout(r, 500)); // Wait before retry
-    }
-
-    // Try 2: Cached IP from previous session
-    const cachedIp = localStorage.getItem('lastEspIp');
-    if (cachedIp) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
-        const res = await fetch(`http://${cachedIp}/ip`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          console.log('[ESP32] Found via cached IP:', data.ip);
-          return data.ip;
-        }
-      } catch (e) {
-        console.log('[ESP32] Cached IP failed');
-      }
-    }
-
-    // Try 3: Network scan - try common ESP32 IP patterns on local network
-    // Get device's gateway to guess subnet
-    try {
-      const subnets = ['192.168.1', '192.168.0', '10.0.0', '172.20.10', '172.20.11'];
-      for (const subnet of subnets) {
-        for (let i = 100; i <= 110; i++) {
-          const testIp = `${subnet}.${i}`;
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 500);
-            const res = await fetch(`http://${testIp}/ip`, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.id && data.id.includes('esp32')) {
-                console.log('[ESP32] Found via network scan:', testIp);
-                localStorage.setItem('lastEspIp', testIp);
-                return testIp;
-              }
-            }
-          } catch (e) {}
-        }
-      }
-    } catch (e) {
-      console.log('[ESP32] Network scan failed');
-    }
-
-    // No IP found - return null (will use relay only)
-    console.log('[ESP32] Auto-discovery failed, will use relay or offline mode');
-    return null;
-  };
-
   useEffect(() => {
-    let localWs: WebSocket | null = null;
-    let relayWs: WebSocket | null = null;
-    let cancelled = false;
-
-    const FALLBACK_RELAY_HOST = 'lecturesync-5960.loca.lt';
-    // Trang Vercel = HTTPS → bắt buộc wss/https, không dùng ws/http (trình duyệt chặn mixed content)
-    const secure = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    const RELAY_HTTP =
-      (process.env.NEXT_PUBLIC_RELAY_HTTP as string) ||
-      (secure ? `https://${FALLBACK_RELAY_HOST}` : `http://${FALLBACK_RELAY_HOST}`);
-    const RELAY_WS =
-      (process.env.NEXT_PUBLIC_RELAY_WS as string) ||
-      (secure ? `wss://${FALLBACK_RELAY_HOST}` : `ws://${FALLBACK_RELAY_HOST}`);
-
-    const handleBinary = (data: ArrayBuffer) => {
-      const size = data.byteLength || (data as any).length || 0;
-      setHwStatus(p => ({ ...p, online: true, bytes: (p.bytes || 0) + size, lastTime: Date.now() }));
-      if (isRecordingRef.current) {
-        const blob = new Blob([data], { type: 'audio/pcm' });
-        audioChunksRef.current.push(blob);
-        // ~vài giây PCM (ESP POST ~1s/lần) — 80 là quá lâu, không thấy transcript
-        if (audioChunksRef.current.length >= 5) processAudioChunks();
-      }
-    };
-
-    const connectLocal = (ip: string) => {
+    if (useHW) {
       try {
-        const ws = new WebSocket(`ws://${ip}:81`);
-        ws.binaryType = 'arraybuffer';
+        // Kết nối WebSocket trực tiếp đến mạch ESP32
+        const ws = new WebSocket(`ws://192.168.0.102:81`);
+        ws.binaryType = "arraybuffer";
 
         ws.onopen = () => {
           streamActiveRef.current = true;
           setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
-          showToast('✅ Kết nối ESP32 thành công!', 'success');
-          localStorage.setItem('lastEspIp', ip);
+          showToast("Đã kết nối luồng thu âm siêu tốc với ESP32!", "success");
         };
 
-        ws.onmessage = (event) => { if (event.data instanceof ArrayBuffer) handleBinary(event.data); };
-        ws.onerror = () => setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
-        ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
+        ws.onmessage = (event) => {
+          if (event.data instanceof ArrayBuffer) {
+            const size = event.data.byteLength || (event.data as any).length || 0;
+            setHwStatus(p => ({ ...p, online: true, bytes: (p.bytes || 0) + size, lastTime: Date.now() }));
+            // Gom audio chỉ khi đang ghi
+            if (isRecordingRef.current) {
+              const blob = new Blob([event.data], { type: "audio/pcm" });
+              audioChunksRef.current.push(blob);
+              // Gom 2.5 giây rồi dịch
+              if (audioChunksRef.current.length >= 80) {
+                processAudioChunks();
+              }
+            }
+          }
+        };
 
-        localWs = ws;
+        ws.onerror = () => {
+          setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
+        };
+
+        ws.onclose = () => {
+          setHwStatus(p => ({ ...p, online: false }));
+        };
+
         wsRef.current = ws;
       } catch (e) {
-        console.error('Local WebSocket Error', e);
+        console.error("WebSocket Error", e);
       }
-    };
-
-    const connectRelay = async (): Promise<boolean> => {
-      try {
-        const res = await fetch(`${RELAY_HTTP}/devices`, {
-          headers: { 'Bypass-Tunnel-Reminder': 'true' },
-        });
-        if (!res.ok) return false;
-        const devices = await res.json();
-        if (!devices || devices.length === 0) return false;
-        const target = devices[0];
-
-        return await new Promise<boolean>((resolve) => {
-          const ws = new WebSocket(RELAY_WS);
-          ws.binaryType = 'arraybuffer';
-          let settled = false;
-          const failTimer = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            ws.close();
-            console.warn('[Relay] WebSocket timeout', RELAY_WS);
-            resolve(false);
-          }, 10000);
-
-          ws.onopen = () => {
-            ws.send(JSON.stringify({ type: 'subscribe', id: target.id }));
-            streamActiveRef.current = true;
-            setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
-            showToast('Đã kết nối tới ESP32 qua relay!', 'success');
-            relayWs = ws;
-            wsRef.current = ws;
-            if (!settled) {
-              settled = true;
-              clearTimeout(failTimer);
-              resolve(true);
-            }
-          };
-
-          ws.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer) handleBinary(event.data);
-            else {
-              try {
-                const txt = JSON.parse(String(event.data));
-                if (txt && txt.type === 'subscribed') {
-                  console.log('Subscribed to', txt.id);
-                }
-              } catch (e) {}
-            }
-          };
-
-          ws.onerror = () => {
-            setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
-            if (!settled) {
-              settled = true;
-              clearTimeout(failTimer);
-              resolve(false);
-            }
-          };
-          ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
-        });
-      } catch (e) {
-        console.error('Relay connect error', e);
-        return false;
-      }
-    };
-
-    if (useHW) {
-      (async () => {
-        const ok = await connectRelay();
-        if (!ok && !cancelled) {
-          setHwStatus({ online: false, bytes: 0, lastTime: 0, retries: 0 });
-          showToast('🔍 Tìm kiếm ESP32 tự động...', 'info');
-          const ip = await discoverESP32IP();
-          if (ip && !cancelled) {
-            connectLocal(ip);
-          } else if (!cancelled) {
-            showToast('ℹ️ ESP32 không tìm được, dùng relay hoặc WiFi cùng cục bộ', 'info');
-          }
-        }
-      })();
     } else {
       streamActiveRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
-      if (audioChunksRef.current.length > 0) processAudioChunks(); // flush remaining
+      if (audioChunksRef.current.length > 0) processAudioChunks(); // Dịch nốt đoạn cuối
     }
 
     return () => {
-      cancelled = true;
       streamActiveRef.current = false;
-      if (localWs) localWs.close();
-      if (relayWs) relayWs.close();
       if (wsRef.current) wsRef.current.close();
     };
   }, [useHW]);

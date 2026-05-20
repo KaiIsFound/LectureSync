@@ -111,22 +111,7 @@ export default function RecordPage() {
     }
   };
 
-  const ESP32_IP = '1.1.1.1'; // WARP / Cloudflare
-
   const discoverESP32IP = async (): Promise<string | null> => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`http://${ESP32_IP}/ip`, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const data = await res.json();
-        localStorage.setItem('lastEspIp', ESP32_IP);
-        return data.ip || ESP32_IP;
-      }
-    } catch (e) {}
-
-    // mDNS
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const controller = new AbortController();
@@ -239,7 +224,9 @@ export default function RecordPage() {
 
     const connectRelay = async () => {
       try {
-        const res = await fetch(`${RELAY_HTTP}/devices`);
+        const res = await fetch(`${RELAY_HTTP}/devices`, {
+          headers: { 'Bypass-Tunnel-Reminder': 'true' },
+        });
         if (!res.ok) return false;
         const devices = await res.json();
         if (!devices || devices.length === 0) return false;
@@ -282,13 +269,15 @@ export default function RecordPage() {
 
     if (useHW) {
       (async () => {
-        localStorage.setItem('lastEspIp', ESP32_IP);
         const ok = await connectRelay();
         if (!ok && !cancelled) {
-          connectLocal(ESP32_IP);
-          if (!cancelled) {
-            const ip = await discoverESP32IP();
-            if (ip && ip !== ESP32_IP && !cancelled) connectLocal(ip);
+          setHwStatus({ online: false, bytes: 0, lastTime: 0, retries: 0 });
+          showToast('🔍 Tìm kiếm ESP32 tự động...', 'info');
+          const ip = await discoverESP32IP();
+          if (ip && !cancelled) {
+            connectLocal(ip);
+          } else if (!cancelled) {
+            showToast('ℹ️ ESP32 không tìm được, dùng relay hoặc WiFi cùng cục bộ', 'info');
           }
         }
       })();

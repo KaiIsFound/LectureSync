@@ -104,7 +104,6 @@ wss.on('connection', function connection(ws, req) {
     if (ws.isDevice && ws.deviceId) {
       console.log(`Device disconnected: ${ws.deviceId}`);
       devices.delete(ws.deviceId);
-      subscribers.delete(ws.deviceId);
     } else if (ws.deviceId) {
       // remove subscriber from sets
       const set = subscribers.get(ws.deviceId);

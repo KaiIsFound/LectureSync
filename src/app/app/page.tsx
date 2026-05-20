@@ -49,7 +49,7 @@ export default function RecordPage() {
   const [useHW, setUseHW] = useState(false);
   const [hwText, setHwText] = useState('');
   const [hwStatus, setHwStatus] = useState({ online: false, bytes: 0, lastTime: 0, retries: 0 });
-  const [espIp, setEspIp] = useState('192.168.0.102');
+  const [espIp, setEspIp] = useState('lecturesync.local');
 
   // Load saved ESP32 IP
   useEffect(() => {

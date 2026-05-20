@@ -5,7 +5,7 @@ import { toast } from "react-hot-toast";
 export default function HardwareTestPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcripts, setTranscripts] = useState<string[]>([]);
-  const [espIp, setEspIp] = useState("192.168.0.100");
+  const [espIp, setEspIp] = useState("lecturesync.local");
   const wsRef = useRef<WebSocket | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamActiveRef = useRef(false);

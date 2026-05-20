@@ -18,6 +18,37 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(out));
     return;
   }
+
+  // Receive audio POSTs from devices: /upload?deviceId=...
+  if (req.method === 'POST' && req.url && req.url.startsWith('/upload')) {
+    try {
+      const fullUrl = new URL(req.url, `http://${req.headers.host}`);
+      const deviceId = fullUrl.searchParams.get('deviceId');
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => {
+        const data = Buffer.concat(chunks);
+        // forward binary to subscribers of this device
+        if (deviceId) {
+          const subs = subscribers.get(deviceId);
+          if (subs) {
+            for (const s of subs) {
+              if (s.readyState === WebSocket.OPEN) s.send(data, { binary: true });
+            }
+          }
+        }
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+        res.end('ok');
+      });
+      return;
+    } catch (e) {
+      console.error('Upload handler error', e);
+      res.writeHead(500);
+      res.end('error');
+      return;
+    }
+  }
+
   res.writeHead(404);
   res.end('Not found');
 });

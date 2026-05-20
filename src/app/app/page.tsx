@@ -111,14 +111,85 @@ export default function RecordPage() {
     }
   };
 
+  // Auto-discover ESP32 IP via mDNS, cached, or network scan - NO PROMPTS
+  const discoverESP32IP = async (): Promise<string | null> => {
+    // Try 1: mDNS hostname (most reliable in home networks)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch('http://lecturensync-esp32.local/ip', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          console.log('[ESP32] Found via mDNS:', data.ip);
+          localStorage.setItem('lastEspIp', data.ip);
+          return data.ip;
+        }
+      } catch (e) {
+        console.log(`[ESP32] mDNS attempt ${attempt + 1} failed`);
+      }
+      await new Promise(r => setTimeout(r, 500)); // Wait before retry
+    }
+
+    // Try 2: Cached IP from previous session
+    const cachedIp = localStorage.getItem('lastEspIp');
+    if (cachedIp) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch(`http://${cachedIp}/ip`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          console.log('[ESP32] Found via cached IP:', data.ip);
+          return data.ip;
+        }
+      } catch (e) {
+        console.log('[ESP32] Cached IP failed');
+      }
+    }
+
+    // Try 3: Network scan - try common ESP32 IP patterns on local network
+    // Get device's gateway to guess subnet
+    try {
+      const subnets = ['192.168.1', '192.168.0', '10.0.0', '172.20.10', '172.20.11'];
+      for (const subnet of subnets) {
+        for (let i = 100; i <= 110; i++) {
+          const testIp = `${subnet}.${i}`;
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 500);
+            const res = await fetch(`http://${testIp}/ip`, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.id && data.id.includes('esp32')) {
+                console.log('[ESP32] Found via network scan:', testIp);
+                localStorage.setItem('lastEspIp', testIp);
+                return testIp;
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {
+      console.log('[ESP32] Network scan failed');
+    }
+
+    // No IP found - return null (will use relay only)
+    console.log('[ESP32] Auto-discovery failed, will use relay or offline mode');
+    return null;
+  };
+
   useEffect(() => {
     let localWs: WebSocket | null = null;
     let relayWs: WebSocket | null = null;
     let cancelled = false;
 
-    const RELAY_HTTP = (process.env.NEXT_PUBLIC_RELAY_HTTP as string) || 'http://localhost:8080';
-    const RELAY_WS = (process.env.NEXT_PUBLIC_RELAY_WS as string) || 'ws://localhost:8080';
-    const localIp = localStorage.getItem('lastEspIp') || '192.168.0.102';
+    const FALLBACK_RELAY_HOST = 'lecturesync-5960.loca.lt';
+    const RELAY_HTTP = (process.env.NEXT_PUBLIC_RELAY_HTTP as string) || `https://${FALLBACK_RELAY_HOST}` || 'http://localhost:8080';
+    const RELAY_WS = (process.env.NEXT_PUBLIC_RELAY_WS as string) || `ws://${FALLBACK_RELAY_HOST}` || 'ws://localhost:8080';
 
     const handleBinary = (data: ArrayBuffer) => {
       const size = data.byteLength || (data as any).length || 0;
@@ -130,16 +201,16 @@ export default function RecordPage() {
       }
     };
 
-    const connectLocal = () => {
+    const connectLocal = (ip: string) => {
       try {
-        const ws = new WebSocket(`ws://${localIp}:81`);
+        const ws = new WebSocket(`ws://${ip}:81`);
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
           streamActiveRef.current = true;
           setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
-          showToast('Đã kết nối luồng thu âm siêu tốc với ESP32 (local)!', 'success');
-          localStorage.setItem('lastEspIp', localIp);
+          showToast('✅ Kết nối ESP32 thành công!', 'success');
+          localStorage.setItem('lastEspIp', ip);
         };
 
         ws.onmessage = (event) => { if (event.data instanceof ArrayBuffer) handleBinary(event.data); };
@@ -200,7 +271,16 @@ export default function RecordPage() {
       (async () => {
         // Try relay first (if available), then fallback to local direct connection
         const ok = await connectRelay();
-        if (!ok && !cancelled) connectLocal();
+        if (!ok && !cancelled) {
+          setHwStatus({ online: false, bytes: 0, lastTime: 0, retries: 0 });
+          showToast('🔍 Tìm kiếm ESP32 tự động...', 'info');
+          const ip = await discoverESP32IP();
+          if (ip && !cancelled) {
+            connectLocal(ip);
+          } else if (!cancelled) {
+            showToast('ℹ️ ESP32 không tìm được, dùng relay hoặc WiFi cùng cục bộ', 'info');
+          }
+        }
       })();
     } else {
       streamActiveRef.current = false;

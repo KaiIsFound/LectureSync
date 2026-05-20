@@ -59,6 +59,28 @@ export default function RecordPage() {
     }
   }, []);
 
+  // Tự động phát hiện IP của ESP32 qua API Cloud Discovery
+  useEffect(() => {
+    if (useHW) {
+      const discoverEsp32 = async () => {
+        try {
+          const res = await fetch('/api/discovery');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.localIp) {
+              setEspIp(data.localIp);
+              localStorage.setItem('esp32_ip', data.localIp);
+              showToast(`Đã tự động phát hiện thấy ESP32 tại IP: ${data.localIp}!`, 'success');
+            }
+          }
+        } catch (err) {
+          console.warn('[Discovery] Không thể tự động tìm thấy ESP32, dùng mặc định:', err);
+        }
+      };
+      discoverEsp32();
+    }
+  }, [useHW, showToast]);
+
   const lastChunk = useRef('');
   const timer = useRef<NodeJS.Timeout | null>(null);
   const chunkTimer = useRef<NodeJS.Timeout | null>(null);

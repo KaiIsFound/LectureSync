@@ -49,37 +49,6 @@ export default function RecordPage() {
   const [useHW, setUseHW] = useState(false);
   const [hwText, setHwText] = useState('');
   const [hwStatus, setHwStatus] = useState({ online: false, bytes: 0, lastTime: 0, retries: 0 });
-  const [espIp, setEspIp] = useState('lecturesync.local');
-
-  // Load saved ESP32 IP
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('esp32_ip');
-      if (saved) setEspIp(saved);
-    }
-  }, []);
-
-  // Tự động phát hiện IP của ESP32 qua API Cloud Discovery
-  useEffect(() => {
-    if (useHW) {
-      const discoverEsp32 = async () => {
-        try {
-          const res = await fetch('/api/discovery');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.localIp) {
-              setEspIp(data.localIp);
-              localStorage.setItem('esp32_ip', data.localIp);
-              showToast(`Đã tự động phát hiện thấy ESP32 tại IP: ${data.localIp}!`, 'success');
-            }
-          }
-        } catch (err) {
-          console.warn('[Discovery] Không thể tự động tìm thấy ESP32, dùng mặc định:', err);
-        }
-      };
-      discoverEsp32();
-    }
-  }, [useHW, showToast]);
 
   const lastChunk = useRef('');
   const timer = useRef<NodeJS.Timeout | null>(null);
@@ -87,6 +56,9 @@ export default function RecordPage() {
   const wpmTimer = useRef<NodeJS.Timeout | null>(null);
   const hwTimer = useRef<NodeJS.Timeout | null>(null);
   const startT = useRef(0);
+  const isRecordingRef = useRef(isRecording);
+
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
   // ── Timers ──
   useEffect(() => {
@@ -140,12 +112,12 @@ export default function RecordPage() {
   };
 
   useEffect(() => {
-    if (useHW && isRecording) {
+    if (useHW) {
       try {
         // Kết nối WebSocket trực tiếp đến mạch ESP32
-        const ws = new WebSocket(`ws://${espIp}:81`);
+        const ws = new WebSocket(`ws://192.168.0.102:81`);
         ws.binaryType = "arraybuffer";
-        
+
         ws.onopen = () => {
           streamActiveRef.current = true;
           setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
@@ -153,14 +125,17 @@ export default function RecordPage() {
         };
 
         ws.onmessage = (event) => {
-          if (!streamActiveRef.current) return;
           if (event.data instanceof ArrayBuffer) {
-            const blob = new Blob([event.data], { type: "audio/pcm" });
-            audioChunksRef.current.push(blob);
-            
-            // Gom 2.5 giây rồi dịch
-            if (audioChunksRef.current.length >= 80) {
-              processAudioChunks();
+            const size = event.data.byteLength || (event.data as any).length || 0;
+            setHwStatus(p => ({ ...p, online: true, bytes: (p.bytes || 0) + size, lastTime: Date.now() }));
+            // Gom audio chỉ khi đang ghi
+            if (isRecordingRef.current) {
+              const blob = new Blob([event.data], { type: "audio/pcm" });
+              audioChunksRef.current.push(blob);
+              // Gom 2.5 giây rồi dịch
+              if (audioChunksRef.current.length >= 80) {
+                processAudioChunks();
+              }
             }
           }
         };
@@ -185,12 +160,12 @@ export default function RecordPage() {
       }
       if (audioChunksRef.current.length > 0) processAudioChunks(); // Dịch nốt đoạn cuối
     }
-    
+
     return () => {
       streamActiveRef.current = false;
       if (wsRef.current) wsRef.current.close();
     };
-  }, [useHW, isRecording, espIp]);
+  }, [useHW]);
 
   // ── AI explanation ──
   const explain = useCallback(async (text: string) => {
@@ -397,23 +372,6 @@ export default function RecordPage() {
                     </svg>
                   </button>
                 )}
-              </div>
-
-              {/* IP Input to easily change the IP address when WiFi changes */}
-              <div className="mt-4 pt-3 border-t border-border/50 flex items-center gap-3">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-text-muted shrink-0">IP ESP32:</span>
-                <input
-                  type="text"
-                  value={espIp}
-                  onChange={(e) => {
-                    const newIp = e.target.value.trim();
-                    setEspIp(newIp);
-                    localStorage.setItem('esp32_ip', newIp);
-                  }}
-                  disabled={isRecording}
-                  className="flex-1 bg-surface-elevated/50 border border-border/80 rounded-xl px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand disabled:opacity-50 transition-all font-mono"
-                  placeholder="Ví dụ: 192.168.0.102"
-                />
               </div>
             </div>
           </div>

@@ -112,57 +112,110 @@ export default function RecordPage() {
   };
 
   useEffect(() => {
-    if (useHW) {
+    let localWs: WebSocket | null = null;
+    let relayWs: WebSocket | null = null;
+    let cancelled = false;
+
+    const RELAY_HTTP = (process.env.NEXT_PUBLIC_RELAY_HTTP as string) || 'http://localhost:8080';
+    const RELAY_WS = (process.env.NEXT_PUBLIC_RELAY_WS as string) || 'ws://localhost:8080';
+    const localIp = localStorage.getItem('lastEspIp') || '192.168.0.102';
+
+    const handleBinary = (data: ArrayBuffer) => {
+      const size = data.byteLength || (data as any).length || 0;
+      setHwStatus(p => ({ ...p, online: true, bytes: (p.bytes || 0) + size, lastTime: Date.now() }));
+      if (isRecordingRef.current) {
+        const blob = new Blob([data], { type: 'audio/pcm' });
+        audioChunksRef.current.push(blob);
+        if (audioChunksRef.current.length >= 80) processAudioChunks();
+      }
+    };
+
+    const connectLocal = () => {
       try {
-        // Kết nối WebSocket trực tiếp đến mạch ESP32
-        const ws = new WebSocket(`ws://192.168.0.102:81`);
-        ws.binaryType = "arraybuffer";
+        const ws = new WebSocket(`ws://${localIp}:81`);
+        ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
           streamActiveRef.current = true;
           setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
-          showToast("Đã kết nối luồng thu âm siêu tốc với ESP32!", "success");
+          showToast('Đã kết nối luồng thu âm siêu tốc với ESP32 (local)!', 'success');
+          localStorage.setItem('lastEspIp', localIp);
+        };
+
+        ws.onmessage = (event) => { if (event.data instanceof ArrayBuffer) handleBinary(event.data); };
+        ws.onerror = () => setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
+        ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
+
+        localWs = ws;
+        wsRef.current = ws;
+      } catch (e) {
+        console.error('Local WebSocket Error', e);
+      }
+    };
+
+    const connectRelay = async () => {
+      try {
+        const res = await fetch(`${RELAY_HTTP}/devices`);
+        if (!res.ok) return false;
+        const devices = await res.json();
+        if (!devices || devices.length === 0) return false;
+        const target = devices[0];
+
+        const ws = new WebSocket(RELAY_WS);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+          // subscribe to device
+          ws.send(JSON.stringify({ type: 'subscribe', id: target.id }));
+          streamActiveRef.current = true;
+          setHwStatus({ online: true, bytes: 0, lastTime: Date.now(), retries: 0 });
+          showToast('Đã kết nối tới ESP32 qua relay!', 'success');
         };
 
         ws.onmessage = (event) => {
-          if (event.data instanceof ArrayBuffer) {
-            const size = event.data.byteLength || (event.data as any).length || 0;
-            setHwStatus(p => ({ ...p, online: true, bytes: (p.bytes || 0) + size, lastTime: Date.now() }));
-            // Gom audio chỉ khi đang ghi
-            if (isRecordingRef.current) {
-              const blob = new Blob([event.data], { type: "audio/pcm" });
-              audioChunksRef.current.push(blob);
-              // Gom 2.5 giây rồi dịch
-              if (audioChunksRef.current.length >= 80) {
-                processAudioChunks();
+          if (event.data instanceof ArrayBuffer) handleBinary(event.data);
+          else {
+            try {
+              const txt = JSON.parse(String(event.data));
+              if (txt && txt.type === 'subscribed') {
+                console.log('Subscribed to', txt.id);
               }
-            }
+            } catch (e) {}
           }
         };
 
-        ws.onerror = () => {
-          setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
-        };
+        ws.onerror = () => setHwStatus(p => ({ ...p, online: false, retries: p.retries + 1 }));
+        ws.onclose = () => setHwStatus(p => ({ ...p, online: false }));
 
-        ws.onclose = () => {
-          setHwStatus(p => ({ ...p, online: false }));
-        };
-
+        relayWs = ws;
         wsRef.current = ws;
+        return true;
       } catch (e) {
-        console.error("WebSocket Error", e);
+        console.error('Relay connect error', e);
+        return false;
       }
+    };
+
+    if (useHW) {
+      (async () => {
+        // Try relay first (if available), then fallback to local direct connection
+        const ok = await connectRelay();
+        if (!ok && !cancelled) connectLocal();
+      })();
     } else {
       streamActiveRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
-      if (audioChunksRef.current.length > 0) processAudioChunks(); // Dịch nốt đoạn cuối
+      if (audioChunksRef.current.length > 0) processAudioChunks(); // flush remaining
     }
 
     return () => {
+      cancelled = true;
       streamActiveRef.current = false;
+      if (localWs) localWs.close();
+      if (relayWs) relayWs.close();
       if (wsRef.current) wsRef.current.close();
     };
   }, [useHW]);

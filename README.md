@@ -51,14 +51,14 @@ LectureSync ra đời nhằm giải quyết trọn vẹn các vấn đề trên 
 * INMP441 GND → GND
 
 **Phần mềm:**
-* **Next.js 16.2.6 (React 19)**: Xây dựng nền tảng Full-stack và xử lý luồng âm thanh theo thời gian thực (Truy cập tại: **https://lecturesync-simple.vercel.app/**).
+* **Next.js 16.2.6 (React 19)**: Xây dựng nền tảng Full-stack và xử lý luồng âm thanh theo thời gian thực (Truy cập tại: **https://lecture-sync-beta.vercel.app/**).
 * **Supabase**: Quản trị cơ sở dữ liệu và xác thực người dùng.
 * **Groq API (Whisper Large V3)**: Phiên âm siêu tốc không độ trễ.
 * **OpenRouter / Gemini API**: Cung cấp năng lực suy luận ngôn ngữ và thị giác máy tính cho AI Chatbot.
 
 **6. Cách sử dụng vận hành:**
 **Phương thức 1: Ghi âm qua trình duyệt (Laptop/Điện thoại)**
-• Truy cập hệ thống tại địa chỉ: **https://lecturesync-simple.vercel.app/**
+• Truy cập hệ thống tại địa chỉ: **https://lecture-sync-beta.vercel.app/**
 • Đăng nhập và nhấn "Bắt đầu ngay" → vào trang Ghi Âm.
 • Chọn ngôn ngữ giảng dạy và nhấn biểu tượng Microphone.
 • Hệ thống sẽ tự động chạy song song 2 AI model, tạo ghi chú, flashcard, quiz khi kết thúc.
@@ -66,7 +66,7 @@ LectureSync ra đời nhằm giải quyết trọn vẹn các vấn đề trên 
 **Phương thức 2: Ghi âm qua Thiết bị học tập IoT (ESP32)**
 • Đấu nối mạch, hàn cố định lên perfboard và cấp nguồn cho ESP32.
 • Vi điều khiển sẽ tự động áp dụng thuật toán Khuếch đại kỹ thuật số (x5) vào sóng âm I2S và tạo luồng chờ WebSockets (Port 81).
-• Mở web **https://lecturesync-simple.vercel.app/**, bật công tắc **"Mic ESP32"** và nhấn nút Microphone.
+• Mở web **https://lecture-sync-beta.vercel.app/**, bật công tắc **"Mic ESP32"** và nhấn nút Microphone.
 • Trình duyệt sẽ kết nối trực tiếp đến phần cứng, gom âm thanh thành các gói nhỏ 2.5 giây và đẩy thẳng lên Server để dịch theo thời gian thực.
 • Server tích hợp Màng lọc Ảo giác (Hallucination Filter) để tự động nhận diện và chặn các chuỗi văn bản rác khi tĩnh lặng.
 
